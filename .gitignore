@@ -1,0 +1,59 @@
+# Build artifacts
+bin/
+obj/
+*.dll
+*.exe
+*.app
+*.log
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Mono Auto Generated Files
+mono_crash.*
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Rider/JetBrains
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+
+# Resharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Others
+TestResults/
+*.VisualState.xml
+*.cache
+*.orig
+*.bak
+*.tmp
+
+# Windows-specific
+*.dbmdl
+
+# Publish
+publish/
+*.publishsettings
+
+# Local logs
+logs/
+*.log
