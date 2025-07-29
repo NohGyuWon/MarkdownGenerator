@@ -1,5 +1,7 @@
+using System;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -9,17 +11,27 @@ using Clipboard = System.Windows.Clipboard;
 
 namespace MarkdownGenerator
 {
+    // 추가된 GenType 열거형
+    public enum GenType
+    {
+        Cs,
+        Cpp,
+        Mssql,
+        Mysql,
+        Sqllite,
+        Proto,
+        Rust
+    }
+
     public class MainViewModel : INotifyPropertyChanged
     {
-        // Microsoft Naming Convention: private fields use _camelCase
         private string _selectedFolderPath = string.Empty;
-        private string _generatedMarkdown = "폴더를 선택하고 '마크다운 생성' 버튼을 눌러주세요.";
+        private string _generatedMarkdown = "폴더를 선택하고 생성 타입을 지정한 후 '마크다운 생성' 버튼을 눌러주세요.";
         private string _statusMessage = "준비 완료";
+        private GenType _selectedGenType = GenType.Cs; // GenType 속성 추가 및 기본값 설정
 
-        // INotifyPropertyChanged 구현을 위한 이벤트
         public event PropertyChangedEventHandler? PropertyChanged;
 
-        // Microsoft Naming Convention: public properties use PascalCase
         public string SelectedFolderPath
         {
             get => _selectedFolderPath;
@@ -38,22 +50,30 @@ namespace MarkdownGenerator
             set { _statusMessage = value; OnPropertyChanged(); }
         }
 
-        // UI의 버튼과 연결될 커맨드(ICommand)
+        // GenType 속성 추가
+        public GenType SelectedGenType
+        {
+            get => _selectedGenType;
+            set
+            {
+                _selectedGenType = value;
+                OnPropertyChanged();
+                // GenType이 변경되면 상태 메시지 업데이트 (선택적)
+                StatusMessage = $"생성 타입이 '{_selectedGenType}'로 변경되었습니다.";
+            }
+        }
+
         public ICommand SelectFolderCommand { get; }
         public ICommand GenerateMarkdownCommand { get; }
         public ICommand CopyToClipboardCommand { get; }
 
         public MainViewModel()
         {
-            // 커맨드 초기화
             SelectFolderCommand = new RelayCommand(SelectFolder);
             GenerateMarkdownCommand = new AsyncRelayCommand(GenerateMarkdownAsync, CanGenerate);
             CopyToClipboardCommand = new RelayCommand(CopyToClipboard, CanCopy);
         }
 
-        /// <summary>
-        /// '폴더 선택' 버튼의 실행 로직
-        /// </summary>
         private void SelectFolder(object? parameter)
         {
             var dialog = new System.Windows.Forms.FolderBrowserDialog
@@ -69,42 +89,43 @@ namespace MarkdownGenerator
             }
         }
 
-        /// <summary>
-        /// '마크다운 생성' 버튼의 비동기 실행 로직
-        /// </summary>
         private async Task GenerateMarkdownAsync()
         {
             StatusMessage = "파일을 읽고 마크다운을 생성하는 중입니다...";
             var stringBuilder = new StringBuilder();
+            var fileFilter = GetFileFilterForGenType();
 
             try
             {
-                // 지정된 폴더와 모든 하위 폴더의 파일 목록을 가져옵니다.
-                var allFiles = Directory.GetFiles(SelectedFolderPath, "*.*", SearchOption.AllDirectories);
+                var directoryInfo = new DirectoryInfo(SelectedFolderPath);
 
-                await Task.Run(() =>
+                // 1. 루트 폴더의 파일 처리
+                var rootFiles = directoryInfo.GetFiles(fileFilter, SearchOption.TopDirectoryOnly).OrderBy(f => f.Name);
+                foreach (var file in rootFiles)
                 {
-                    foreach (var filePath in allFiles)
+                    await AppendFileContentAsync(stringBuilder, file.FullName);
+                }
+
+                // 2. 하위 폴더 순회하며 파일 처리
+                var subDirectories = directoryInfo.GetDirectories("*", SearchOption.AllDirectories).OrderBy(d => d.FullName);
+                foreach (var dir in subDirectories)
+                {
+                    var filesInDir = dir.GetFiles(fileFilter, SearchOption.TopDirectoryOnly).OrderBy(f => f.Name);
+                    if (filesInDir.Any())
                     {
-                        var fileInfo = new FileInfo(filePath);
+                        // 하위 폴더 경로 추가
+                        stringBuilder.AppendLine($"### `{dir.FullName.Replace(SelectedFolderPath, "").TrimStart('\\')}`");
+                        stringBuilder.AppendLine();
 
-                        // 파일 이름 추가
-                        stringBuilder.AppendLine($"**`{fileInfo.Name}`**");
-
-                        // 코드 블록 시작
-                        stringBuilder.AppendLine($"```{GetLanguageIdentifier(fileInfo.Extension)}");
-
-                        // 파일 내용 읽어서 추가
-                        stringBuilder.AppendLine(File.ReadAllText(filePath));
-
-                        // 코드 블록 종료
-                        stringBuilder.AppendLine("```");
-                        stringBuilder.AppendLine(); // 파일 간 구분을 위한 빈 줄
+                        foreach (var file in filesInDir)
+                        {
+                            await AppendFileContentAsync(stringBuilder, file.FullName);
+                        }
                     }
-                });
-                
+                }
+
                 GeneratedMarkdown = stringBuilder.ToString();
-                StatusMessage = $"{allFiles.Length}개의 파일 변환 완료!";
+                StatusMessage = "마크다운 생성 완료!";
             }
             catch (Exception ex)
             {
@@ -114,17 +135,41 @@ namespace MarkdownGenerator
         }
 
         /// <summary>
-        /// '마크다운 생성' 버튼의 활성화 조건
+        /// 파일 내용을 읽고 StringBuilder에 추가하는 보조 메서드
         /// </summary>
-        private bool CanGenerate(object? parameter)
+        private async Task AppendFileContentAsync(StringBuilder sb, string filePath)
         {
-            // 선택된 폴더 경로가 비어있지 않을 때만 버튼을 활성화합니다.
-            return !string.IsNullOrEmpty(SelectedFolderPath);
+            var fileInfo = new FileInfo(filePath);
+            sb.AppendLine($"**`{fileInfo.Name}`**");
+            sb.AppendLine($"```{GetLanguageIdentifier(fileInfo.Extension)}");
+            sb.AppendLine(await File.ReadAllTextAsync(filePath));
+            sb.AppendLine("```");
+            sb.AppendLine();
         }
 
         /// <summary>
-        /// '클립보드로 복사' 버튼의 실행 로직
+        /// 선택된 GenType에 맞는 파일 필터(*.cs 등)를 반환합니다.
         /// </summary>
+        private string GetFileFilterForGenType()
+        {
+            return SelectedGenType switch
+            {
+                GenType.Cs => "*.cs",
+                GenType.Cpp => "*.cpp", // .h도 필요한 경우 로직 추가 필요
+                GenType.Mssql => "*.sql",
+                GenType.Mysql => "*.sql",
+                GenType.Sqllite => "*.sql", // 또는 .db
+                GenType.Proto => "*.proto",
+                GenType.Rust => "*.rs",
+                _ => "*.*"
+            };
+        }
+
+        private bool CanGenerate(object? parameter)
+        {
+            return !string.IsNullOrEmpty(SelectedFolderPath);
+        }
+
         private void CopyToClipboard(object? parameter)
         {
             if (!string.IsNullOrEmpty(GeneratedMarkdown))
@@ -134,21 +179,13 @@ namespace MarkdownGenerator
             }
         }
 
-        /// <summary>
-        /// '클립보드로 복사' 버튼의 활성화 조건
-        /// </summary>
         private bool CanCopy(object? parameter)
         {
-            // 생성된 마크다운 텍스트가 있을 때만 버튼을 활성화합니다.
             return !string.IsNullOrEmpty(GeneratedMarkdown);
         }
 
-        /// <summary>
-        /// 파일 확장자에 따라 마크다운 언어 식별자를 반환합니다.
-        /// </summary>
         private string GetLanguageIdentifier(string extension)
         {
-            // Microsoft Naming Convention: local variables use camelCase
             string lowerExtension = extension.ToLower();
             return lowerExtension switch
             {
@@ -166,11 +203,13 @@ namespace MarkdownGenerator
                 ".h" => "cpp",
                 ".md" => "markdown",
                 ".txt" => "text",
-                _ => "" // 언어 식별자가 없으면 일반 텍스트로 처리됩니다.
+                ".sql" => "sql",
+                ".proto" => "protobuf",
+                ".rs" => "rust",
+                _ => ""
             };
         }
 
-        // INotifyPropertyChanged 인터페이스의 메서드 구현
         protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
